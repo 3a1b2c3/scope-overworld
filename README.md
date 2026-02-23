@@ -6,9 +6,6 @@
 
 [Scope](https://github.com/daydreamlive/scope) plugin providing pipelines for Overworld world models.
 
-> [!IMPORTANT]
-> Make sure you install Scope with the latest version of the `main` branch.
-> If you are using [Runpod](https://github.com/daydreamlive/scope?tab=readme-ov-file#runpod), you need to use the `daydreamlive/scope:main` docker image. You can configure this in the Runpod template by editing the Docker image setting.
 
 ## Features
 
@@ -16,11 +13,11 @@
 
 ## HuggingFace
 
-Model weights require HuggingFace authentication. See the [HuggingFace guide](https://github.com/daydreamlive/scope/blob/main/docs/huggingface.md) for setup instructions.
+Model weights require HuggingFace authentication. See the [HuggingFace guide](https://docs.daydream.live/scope/guides/huggingface) for setup instructions.
 
 ## Install
 
-Follow the [Scope plugins guide](https://github.com/daydreamlive/scope/blob/main/docs/plugins.md) to install this plugin using the URL:
+Follow the [Scope plugins guide](https://docs.daydream.live/scope/guides/plugins) to install this plugin using the URL:
 
 ```
 https://github.com/daydreamlive/scope-overworld.git
@@ -28,10 +25,11 @@ https://github.com/daydreamlive/scope-overworld.git
 
 ## Upgrade
 
-Follow the [Scope plugins guide](https://github.com/daydreamlive/scope/blob/main/docs/plugins.md) to upgrade this plugin to the latest version.
+Follow the [Scope plugins guide](https://docs.daydream.live/scope/guides/plugins) to upgrade this plugin to the latest version.
 
 ## Architecture
 
 The `waypoint` pipeline uses [world_engine](https://github.com/Wayfarer-Labs/world_engine) for inference. It loads three model components: the Waypoint world model, OWL VAE (encoder/decoder), and UMT5-XL (text encoder). On first load, a JIT warmup pass runs for optimized performance which could take as long as 20 minutes on the first run.
 
 Each frame: controller input and prompt are processed → world_engine generates the next frame → the pipeline outputs a video tensor.
+
