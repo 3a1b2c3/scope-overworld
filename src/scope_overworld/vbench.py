@@ -4,13 +4,13 @@ Generates N videos per prompt, saves to output_dir, writes per-video CSV stats.
 
 Usage (from scope-overworld root):
     # With VBench dataset:
-    python src/scope_overworld/vbench.py --vbench_json ../VBench/.../i2v-bench-info.json --crop_dir ../VBench/.../crop/1-1
+    python src/scope_overworld/vbench.py vbench --vbench_info_json ../VBench/.../i2v-bench-info.json --crop_dir ../VBench/.../crop/1-1
 
     # With a plain prompts file (one prompt per line):
-    python src/scope_overworld/vbench.py --prompts_file prompts.txt [--images_dir images/]
+    python src/scope_overworld/vbench.py vbench --prompts_file prompts.txt [--images_dir images/]
 
     # Minimal — generates from built-in default prompts, no images:
-    python src/scope_overworld/vbench.py
+    python src/scope_overworld/vbench.py vbench
 """
 import os
 import sys
@@ -23,15 +23,14 @@ if os.path.exists(_venv_python) and os.path.abspath(sys.executable) != os.path.a
     import subprocess
     sys.exit(subprocess.run([_venv_python] + sys.argv).returncode)
 
-import argparse
 import csv
 import json
-import random
 import re
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+import fire
 import psutil
 import torch
 import torchvision
@@ -58,24 +57,12 @@ def _fmt_duration(secs):
     return f"{h:02d}h{m:02d}m{s:02d}s"
 
 
-def _sys_stats():
-    vm = psutil.virtual_memory()
-    ram_used  = vm.used  / 1024**3
-    ram_total = vm.total / 1024**3
-    if torch.cuda.is_available():
-        gpu_used  = torch.cuda.memory_allocated() / 1024**3
-        gpu_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-    else:
-        gpu_used = gpu_total = 0.0
-    return ram_used, ram_total, gpu_used, gpu_total
-
-
-def load_prompts(args):
+def load_prompts(vbench_info_json, crop_dir, prompts_file, images_dir):
     """Returns list of (image_path_or_None, caption) tuples."""
     # Priority 1: VBench JSON
-    if args.vbench_json and os.path.isfile(args.vbench_json):
-        crop_dir = os.path.abspath(args.crop_dir) if args.crop_dir else None
-        with open(args.vbench_json, encoding="utf-8") as f:
+    if vbench_info_json and os.path.isfile(vbench_info_json):
+        crop_base = os.path.abspath(crop_dir) if crop_dir else None
+        with open(vbench_info_json, encoding="utf-8") as f:
             entries = json.load(f)
         seen, result = set(), []
         for e in entries:
@@ -86,21 +73,21 @@ def load_prompts(args):
                 continue
             seen.add(name)
             caption = e.get("caption", os.path.splitext(name)[0])
-            image_path = os.path.join(crop_dir, name) if crop_dir else None
+            image_path = os.path.join(crop_base, name) if crop_base else None
             result.append((image_path, caption))
         return result
 
     # Priority 2: plain text prompts file
-    if args.prompts_file and os.path.isfile(args.prompts_file):
-        captions = [l.strip() for l in open(args.prompts_file, encoding="utf-8") if l.strip()]
-        images_dir = os.path.abspath(args.images_dir) if args.images_dir else None
+    if prompts_file and os.path.isfile(prompts_file):
+        captions = [l.strip() for l in open(prompts_file, encoding="utf-8") if l.strip()]
+        images_base = os.path.abspath(images_dir) if images_dir else None
         result = []
         for caption in captions:
             image_path = None
-            if images_dir:
+            if images_base:
                 stem = _safe(caption)
                 for ext in (".jpg", ".jpeg", ".png", ".webp"):
-                    candidate = os.path.join(images_dir, stem + ext)
+                    candidate = os.path.join(images_base, stem + ext)
                     if os.path.isfile(candidate):
                         image_path = candidate
                         break
@@ -129,113 +116,95 @@ def generate_video(pipeline, image_path, caption: str, num_frames: int) -> torch
     return (video * 255).clamp(0, 255).byte()
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir",   default=os.path.join(_ROOT_DIR, "out", "videos"))
-    parser.add_argument("--num_samples",  type=int, default=5)
-    parser.add_argument("--num_frames",   type=int, default=161)
-    parser.add_argument("--fps",          type=int, default=16)
-    # VBench dataset (optional)
-    parser.add_argument("--vbench_json",  default=None, help="Path to i2v-bench-info.json")
-    parser.add_argument("--crop_dir",     default=None, help="VBench crop image directory")
-    # Plain file mode (optional)
-    parser.add_argument("--prompts_file", default=None, help="Text file with one prompt per line")
-    parser.add_argument("--images_dir",   default=None, help="Directory of conditioning images (matched by prompt stem)")
-    args = parser.parse_args()
-
-    out_dir = os.path.abspath(args.output_dir)
+def vbench_batch(
+    output_dir=None,
+    num_samples=5,
+    num_frames=161,
+    fps=16,
+    seed=42,
+    vbench_info_json=None,
+    crop_dir=None,
+    prompts_file=None,
+    images_dir=None,
+):
+    out_dir = os.path.abspath(output_dir or os.path.join(_ROOT_DIR, "out", "videos"))
     os.makedirs(out_dir, exist_ok=True)
 
-    stats_path   = os.path.join(os.path.dirname(out_dir), "gen_stats.csv")
-    stats_is_new = not os.path.exists(stats_path)
-    stats_f = open(stats_path, "a", newline="", encoding="utf-8")
-    stats_w = csv.writer(stats_f)
-    if stats_is_new:
-        stats_w.writerow(["timestamp", "task_idx", "prompt", "sample_idx", "seed",
-                          "duration_s", "gen_fps", "video_count", "total_elapsed_s", "avg_s_per_video",
-                          "ram_used_gb", "ram_total_gb", "gpu_used_gb", "gpu_total_gb",
-                          "out_path", "status"])
+    stats_path    = os.path.join(os.path.dirname(out_dir), "vbench_stats.csv")
+    _stats_is_new = not os.path.exists(stats_path)
+    stats_f       = open(stats_path, "a", newline="", encoding="utf-8")
+    stats_w       = csv.writer(stats_f)
+    if _stats_is_new:
+        stats_w.writerow(["task_idx", "prompt", "sample_idx", "duration_s", "gen_fps",
+                          "ram_gb", "vram_gb", "out_path", "status"])
         stats_f.flush()
 
-    prompts = load_prompts(args)
-    total   = len(prompts) * args.num_samples
+    import torch._inductor.config as _ind_cfg
+    _ind_cfg.max_autotune      = False
+    _ind_cfg.max_autotune_gemm = False
+
+    prompts = load_prompts(vbench_info_json, crop_dir, prompts_file, images_dir)
+    total   = len(prompts) * num_samples
 
     print(f"{'='*70}")
-    print(f"[gen] scope-overworld (Waypoint) batch generation")
-    print(f"[gen] {len(prompts)} prompts x {args.num_samples} samples = {total} videos")
-    print(f"[gen] {args.num_frames} frames @ {args.fps} fps")
-    print(f"[gen] output → {out_dir}")
-    print(f"[gen] stats  → {stats_path}")
+    print(f"[vbench] scope-overworld (Waypoint) batch generation")
+    print(f"[vbench] {len(prompts)} prompts × {num_samples} samples = {total} videos")
+    print(f"[vbench] {num_frames} frames @ {fps} fps")
+    print(f"[vbench] output → {out_dir}")
+    print(f"[vbench] stats  → {stats_path}")
     print(f"{'='*70}")
 
-    print(f"[gen] Loading WaypointPipeline...")
+    print(f"[vbench] Loading WaypointPipeline...")
     from scope_overworld.pipeline import WaypointPipeline
     pipeline = WaypointPipeline()
-    print(f"[gen] Pipeline ready.\n")
+    print(f"[vbench] Pipeline ready.\n")
 
-    done = skipped = generated = errors = 0
-    ok_total_s = 0.0
+    skipped = generated = errors = 0
+    done = 0
     t_start = time.time()
 
-    for task_idx, (image_path, caption) in enumerate(prompts):
-        for sample_idx in range(args.num_samples):
-            seed     = random.randint(0, 2**31 - 1)
-            out_path = os.path.join(out_dir, f"{_safe(caption)}-{sample_idx}.mp4")
+    for task_idx, (image_path, prompt) in enumerate(prompts):
+        for sample_idx in range(num_samples):
+            sample_seed = seed + sample_idx
+            out_path    = os.path.join(out_dir, f"{_safe(prompt)}-{sample_idx}-{sample_seed}.mp4")
 
-            elapsed = time.time() - t_start
-            pct     = 100 * done / total if total else 0
-            eta_str = avg_str = ""
-            if generated > 0:
-                avg_s     = ok_total_s / generated
-                remaining = (total - done) * avg_s
-                eta_str   = f"  ETA {_fmt_duration(remaining)}"
-                avg_str   = f"  avg {avg_s/60:.1f} min/video"
-            print(f"\n{'─'*70}")
-            print(f"[gen] [{done+1}/{total}  {pct:.0f}%{eta_str}{avg_str}]  elapsed {_fmt_duration(elapsed)}")
-            print(f"[gen] prompt {task_idx+1}/{len(prompts)}  sample {sample_idx+1}/{args.num_samples}  seed {seed}")
-            print(f"[gen] {caption[:70]}")
+            pct = 100 * done / total if total else 0
+            eta = ""
+            if done > 0:
+                elapsed   = time.time() - t_start
+                secs_left = elapsed / done * (total - done)
+                eta       = f"  ETA {_fmt_duration(secs_left)}"
+            print(f"[vbench] [{done+1}/{total}  {pct:.0f}%{eta}]  prompt {task_idx+1}/{len(prompts)}  sample {sample_idx+1}/{num_samples}: {prompt[:50]}")
 
-            if os.path.isfile(out_path):
-                print(f"[gen] → SKIP (already exists)")
+            if os.path.exists(out_path):
+                print(f"[vbench] → SKIP (already exists)")
                 skipped += 1
-                done += 1
-                stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), task_idx, caption, sample_idx, seed,
-                                  "", "", generated, f"{elapsed:.1f}", "",
-                                  "", "", "", "", out_path, "skipped"])
+                done    += 1
+                stats_w.writerow([task_idx, prompt, sample_idx, "", "", "", "", out_path, "skipped"])
                 stats_f.flush()
                 continue
 
             try:
-                torch.manual_seed(seed)
+                torch.manual_seed(sample_seed)
                 st = time.time()
 
-                video_uint8 = generate_video(pipeline, image_path, caption, args.num_frames)
-                torchvision.io.write_video(out_path, video_uint8, fps=args.fps)
+                video_uint8 = generate_video(pipeline, image_path, prompt, num_frames)
+                torchvision.io.write_video(out_path, video_uint8, fps=fps)
 
-                duration   = time.time() - st
-                ok_total_s += duration
-                generated  += 1
-                gen_fps     = args.num_frames / duration if duration > 0 else 0.0
+                duration = time.time() - st
+                gen_fps  = num_frames / duration if duration > 0 else 0.0
+                _ram_gb  = psutil.Process().memory_info().rss / 1024**3
+                _vram_gb = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0.0
 
-                ram_used, ram_total, gpu_used, gpu_total = _sys_stats()
-                avg_s_per = ok_total_s / generated
-
-                print(f"[gen] saved  {os.path.basename(out_path)}")
-                print(f"[gen]   duration {_fmt_duration(duration)}  |  {gen_fps:.2f} gen-fps  |  avg {avg_s_per/60:.1f} min/video")
-                print(f"[gen]   RAM {ram_used:.1f}/{ram_total:.0f} GB  |  GPU {gpu_used:.1f}/{gpu_total:.0f} GB")
-
-                stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), task_idx, caption, sample_idx, seed,
-                                  f"{duration:.1f}", f"{gen_fps:.2f}", generated, f"{time.time()-t_start:.1f}", f"{avg_s_per:.1f}",
-                                  f"{ram_used:.2f}", f"{ram_total:.2f}", f"{gpu_used:.2f}", f"{gpu_total:.2f}",
-                                  out_path, "ok"])
+                print(f"[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps  RAM {_ram_gb:.1f}GB  VRAM {_vram_gb:.1f}GB)")
+                stats_w.writerow([task_idx, prompt, sample_idx, f"{duration:.2f}", f"{gen_fps:.2f}",
+                                  f"{_ram_gb:.2f}", f"{_vram_gb:.2f}", out_path, "ok"])
                 stats_f.flush()
+                generated += 1
 
             except Exception as exc:
-                print(f"[gen] ERROR: {exc}")
-                ram_used, _, gpu_used, _ = _sys_stats()
-                stats_w.writerow([time.strftime("%Y-%m-%dT%H:%M:%S"), task_idx, caption, sample_idx, seed,
-                                  "", "", generated, f"{time.time()-t_start:.1f}", "",
-                                  f"{ram_used:.2f}", "", f"{gpu_used:.2f}", "", out_path, "error"])
+                print(f"[vbench] ERROR task {task_idx} sample {sample_idx}: {exc}")
+                stats_w.writerow([task_idx, prompt, sample_idx, "", "", "", "", out_path, "error"])
                 stats_f.flush()
                 errors += 1
 
@@ -243,15 +212,9 @@ def main():
 
     elapsed_total = time.time() - t_start
     stats_f.close()
-    print(f"\n{'='*70}")
-    print(f"[gen] DONE  generated={generated}  skipped={skipped}  errors={errors}")
-    print(f"[gen] total elapsed: {_fmt_duration(elapsed_total)}")
-    if generated:
-        print(f"[gen] avg per video: {ok_total_s/generated/60:.1f} min")
-    print(f"[gen] videos → {out_dir}")
-    print(f"[gen] stats  → {stats_path}")
-    print(f"{'='*70}")
+    print(f"\n[vbench] done — generated={generated}  skipped={skipped}  errors={errors}  elapsed={elapsed_total/60:.1f}m")
+    print(f"[vbench] stats → {stats_path}")
 
 
 if __name__ == "__main__":
-    main()
+    fire.Fire({"vbench": vbench_batch})
