@@ -31,6 +31,11 @@ import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+import warnings
+warnings.filterwarnings("always")
+import torch
+import torch._dynamo
+
 import argparse
 import psutil
 import torch
@@ -102,10 +107,13 @@ def load_prompts(vbench_info_json, crop_dir, prompts_file, images_dir):
     return [(None, p) for p in _DEFAULT_PROMPTS]
 
 
-def generate_video(pipeline, image_path, caption: str, num_frames: int) -> torch.Tensor:
+def generate_video(pipeline, image_path, caption: str, num_frames: int, ctrl_input=None) -> torch.Tensor:
     """Generate a video tensor (T, H, W, 3) uint8."""
+    from scope.core.pipelines.controller import CtrlInput
+    ctrl = ctrl_input or CtrlInput()
+
     frames = []
-    call_kwargs = {"prompts": [caption], "init_cache": True}
+    call_kwargs = {"prompts": [caption], "init_cache": True, "ctrl_input": ctrl}
     if image_path and os.path.isfile(image_path):
         call_kwargs["images"] = [image_path]
 
@@ -113,7 +121,7 @@ def generate_video(pipeline, image_path, caption: str, num_frames: int) -> torch
     frames.append(result["video"][0])  # (H, W, 3) float [0, 1]
 
     for _ in range(num_frames - 1):
-        result = pipeline()
+        result = pipeline(ctrl_input=ctrl)
         frames.append(result["video"][0])
 
     video = torch.stack(frames)
@@ -125,12 +133,13 @@ def main():
     parser.add_argument("--output_dir",       default=os.path.join(_ROOT_DIR, "out", "videos"))
     parser.add_argument("--num_samples",      type=int, default=5)
     parser.add_argument("--num_frames",       type=int, default=161)
-    parser.add_argument("--fps",              type=int, default=16)
+    parser.add_argument("--fps",              type=int, default=24)
     parser.add_argument("--seed",             type=int, default=42)
     parser.add_argument("--vbench_info_json", default=_DEFAULT_INFO_JSON, help="Path to i2v-bench-info.json")
     parser.add_argument("--crop_dir",         default=_DEFAULT_CROP_DIR, help="VBench crop image directory")
     parser.add_argument("--prompts_file",     default=None, help="Text file with one prompt per line")
     parser.add_argument("--images_dir",       default=None, help="Directory of conditioning images")
+    parser.add_argument("--ctrl",             default=None, help="Comma-separated W3C key codes to hold (e.g. KeyW,Space)")
     args = parser.parse_args()
 
     output_dir       = args.output_dir
@@ -143,6 +152,13 @@ def main():
     prompts_file     = args.prompts_file
     images_dir       = args.images_dir
 
+    from scope.core.pipelines.controller import CtrlInput
+    if args.ctrl:
+        keys = {k.strip() for k in args.ctrl.split(",") if k.strip()}
+        ctrl_input = CtrlInput(button=keys)
+    else:
+        ctrl_input = CtrlInput()
+
     out_dir = os.path.abspath(output_dir)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -154,10 +170,6 @@ def main():
         stats_w.writerow(["task_idx", "prompt", "sample_idx", "duration_s", "gen_fps",
                           "ram_gb", "vram_gb", "out_path", "status"])
         stats_f.flush()
-
-    import torch._inductor.config as _ind_cfg
-    _ind_cfg.max_autotune      = False
-    _ind_cfg.max_autotune_gemm = False
 
     prompts = load_prompts(vbench_info_json, crop_dir, prompts_file, images_dir)
     total   = len(prompts) * num_samples
