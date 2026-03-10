@@ -65,7 +65,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir",  default=os.path.join(_ROOT_DIR, "output", "vbench", "videos"))
     parser.add_argument("--num_samples", type=int, default=5)
-    parser.add_argument("--num_frames",  type=int, default=64)
+    parser.add_argument("--num_frames",  type=int, default=161)
     parser.add_argument("--fps",         type=int, default=16)
     parser.add_argument("--vbench_json", default=_DEFAULT_JSON)
     parser.add_argument("--crop_dir",    default=_DEFAULT_CROP)
