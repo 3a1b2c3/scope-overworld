@@ -4,13 +4,13 @@ Generates N videos per prompt, saves to output_dir, writes per-video CSV stats.
 
 Usage (from scope-overworld root):
     # With VBench dataset:
-    python src/scope_overworld/vbench.py vbench --vbench_info_json ../VBench/.../i2v-bench-info.json --crop_dir ../VBench/.../crop/1-1
+    python src/scope_overworld/vbench.py --vbench_info_json ../VBench/.../i2v-bench-info.json --crop_dir ../VBench/.../crop/1-1
 
     # With a plain prompts file (one prompt per line):
-    python src/scope_overworld/vbench.py vbench --prompts_file prompts.txt [--images_dir images/]
+    python src/scope_overworld/vbench.py --prompts_file prompts.txt [--images_dir images/]
 
     # Minimal — generates from built-in default prompts, no images:
-    python src/scope_overworld/vbench.py vbench
+    python src/scope_overworld/vbench.py
 """
 import os
 import sys
@@ -27,16 +27,20 @@ import csv
 import json
 import re
 import time
+import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import fire
+import argparse
 import psutil
 import torch
 import torchvision
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_ROOT_DIR   = os.path.join(_SCRIPT_DIR, "..", "..")
+_SCRIPT_DIR        = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR          = os.path.join(_SCRIPT_DIR, "..", "..")
+_VBENCH_DATA       = os.path.join(_ROOT_DIR, "..", "VBench", "vbench2_beta_i2v", "vbench2_beta_i2v", "data")
+_DEFAULT_INFO_JSON = os.path.join(_VBENCH_DATA, "i2v-bench-info.json")
+_DEFAULT_CROP_DIR  = os.path.join(_VBENCH_DATA, "crop", "1-1")
 
 _DEFAULT_PROMPTS = [
     "a mountain landscape with snow",
@@ -116,18 +120,30 @@ def generate_video(pipeline, image_path, caption: str, num_frames: int) -> torch
     return (video * 255).clamp(0, 255).byte()
 
 
-def vbench_batch(
-    output_dir=None,
-    num_samples=5,
-    num_frames=161,
-    fps=16,
-    seed=42,
-    vbench_info_json=None,
-    crop_dir=None,
-    prompts_file=None,
-    images_dir=None,
-):
-    out_dir = os.path.abspath(output_dir or os.path.join(_ROOT_DIR, "out", "videos"))
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output_dir",       default=os.path.join(_ROOT_DIR, "out", "videos"))
+    parser.add_argument("--num_samples",      type=int, default=5)
+    parser.add_argument("--num_frames",       type=int, default=161)
+    parser.add_argument("--fps",              type=int, default=16)
+    parser.add_argument("--seed",             type=int, default=42)
+    parser.add_argument("--vbench_info_json", default=_DEFAULT_INFO_JSON, help="Path to i2v-bench-info.json")
+    parser.add_argument("--crop_dir",         default=_DEFAULT_CROP_DIR, help="VBench crop image directory")
+    parser.add_argument("--prompts_file",     default=None, help="Text file with one prompt per line")
+    parser.add_argument("--images_dir",       default=None, help="Directory of conditioning images")
+    args = parser.parse_args()
+
+    output_dir       = args.output_dir
+    num_samples      = args.num_samples
+    num_frames       = args.num_frames
+    fps              = args.fps
+    seed             = args.seed
+    vbench_info_json = args.vbench_info_json
+    crop_dir         = args.crop_dir
+    prompts_file     = args.prompts_file
+    images_dir       = args.images_dir
+
+    out_dir = os.path.abspath(output_dir)
     os.makedirs(out_dir, exist_ok=True)
 
     stats_path    = os.path.join(os.path.dirname(out_dir), "vbench_stats.csv")
@@ -161,6 +177,7 @@ def vbench_batch(
 
     skipped = generated = errors = 0
     done = 0
+    ok_total_s = 0.0
     t_start = time.time()
 
     for task_idx, (image_path, prompt) in enumerate(prompts):
@@ -168,13 +185,19 @@ def vbench_batch(
             sample_seed = seed + sample_idx
             out_path    = os.path.join(out_dir, f"{_safe(prompt)}-{sample_idx}-{sample_seed}.mp4")
 
-            pct = 100 * done / total if total else 0
-            eta = ""
-            if done > 0:
-                elapsed   = time.time() - t_start
-                secs_left = elapsed / done * (total - done)
+            elapsed = time.time() - t_start
+            pct     = 100 * done / total if total else 0
+            eta = avg = ""
+            if generated > 0:
+                avg_s     = ok_total_s / generated
+                secs_left = avg_s * (total - done)
                 eta       = f"  ETA {_fmt_duration(secs_left)}"
-            print(f"[vbench] [{done+1}/{total}  {pct:.0f}%{eta}]  prompt {task_idx+1}/{len(prompts)}  sample {sample_idx+1}/{num_samples}: {prompt[:50]}")
+                avg       = f"  avg {avg_s/60:.1f}min/video"
+            print(f"\n[vbench] [{done+1}/{total}  {pct:.0f}%{eta}{avg}]  elapsed {_fmt_duration(elapsed)}")
+            print(f"[vbench] prompt {task_idx+1}/{len(prompts)}  sample {sample_idx+1}/{num_samples}  seed {sample_seed}")
+            print(f"[vbench] {prompt[:70]}")
+            if image_path:
+                print(f"[vbench] image  {image_path}")
 
             if os.path.exists(out_path):
                 print(f"[vbench] → SKIP (already exists)")
@@ -196,7 +219,9 @@ def vbench_batch(
                 _ram_gb  = psutil.Process().memory_info().rss / 1024**3
                 _vram_gb = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0.0
 
-                print(f"[vbench] saved  {out_path}  ({gen_fps:.1f} gen-fps  RAM {_ram_gb:.1f}GB  VRAM {_vram_gb:.1f}GB)")
+                ok_total_s += duration
+                print(f"[vbench] saved  {out_path}")
+                print(f"[vbench]   {_fmt_duration(duration)}  |  {gen_fps:.1f} gen-fps  |  RAM {_ram_gb:.1f}GB  VRAM {_vram_gb:.1f}GB")
                 stats_w.writerow([task_idx, prompt, sample_idx, f"{duration:.2f}", f"{gen_fps:.2f}",
                                   f"{_ram_gb:.2f}", f"{_vram_gb:.2f}", out_path, "ok"])
                 stats_f.flush()
@@ -204,6 +229,7 @@ def vbench_batch(
 
             except Exception as exc:
                 print(f"[vbench] ERROR task {task_idx} sample {sample_idx}: {exc}")
+                traceback.print_exc()
                 stats_w.writerow([task_idx, prompt, sample_idx, "", "", "", "", out_path, "error"])
                 stats_f.flush()
                 errors += 1
@@ -212,9 +238,15 @@ def vbench_batch(
 
     elapsed_total = time.time() - t_start
     stats_f.close()
-    print(f"\n[vbench] done — generated={generated}  skipped={skipped}  errors={errors}  elapsed={elapsed_total/60:.1f}m")
-    print(f"[vbench] stats → {stats_path}")
+    print(f"\n{'='*70}")
+    print(f"[vbench] DONE  generated={generated}  skipped={skipped}  errors={errors}")
+    print(f"[vbench] total elapsed : {_fmt_duration(elapsed_total)}")
+    if generated:
+        print(f"[vbench] avg per video : {ok_total_s/generated/60:.1f} min")
+    print(f"[vbench] videos → {out_dir}")
+    print(f"[vbench] stats  → {stats_path}")
+    print(f"{'='*70}")
 
 
 if __name__ == "__main__":
-    fire.Fire({"vbench": vbench_batch})
+    main()
