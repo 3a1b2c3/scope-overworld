@@ -17,8 +17,8 @@ class WaypointConfig(BasePipelineConfig):
     docs_url = "https://github.com/Wayfarer-Labs/world_engine"
 
     supports_prompts = True
-    default_temporal_interpolation_method = None
-    default_spatial_interpolation_method = None
+    default_temporal_interpolation_method: ClassVar[None] = None
+    default_spatial_interpolation_method: ClassVar[None] = None
 
     supports_cache_management = True
 
