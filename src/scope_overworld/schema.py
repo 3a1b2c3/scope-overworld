@@ -68,12 +68,16 @@ class WaypointConfig(BasePipelineConfig):
 
 
 class Waypoint360Config(WaypointConfig):
-    """Configuration for Waypoint 1.5 360p pipeline (laptop GPUs / Apple Silicon)."""
+    """Configuration for Waypoint 1.5 360p pipeline (laptop-class NVIDIA GPUs).
+
+    Note: world_engine is CUDA-only; Apple Silicon is not supported via this
+    pipeline. Mac users should use Overworld's Biome app (https://over.world/install).
+    """
 
     pipeline_id = "waypoint_360p"
     pipeline_name = "Waypoint 1.5 (360p)"
     pipeline_description = (
-        "Streaming pipeline for Waypoint-1.5-1B-360P (lighter hardware: laptop GPUs, Apple Silicon)."
+        "Streaming pipeline for Waypoint-1.5-1B-360P (lighter variant for laptop-class NVIDIA GPUs)."
     )
 
     artifacts: ClassVar[list[Artifact]] = [

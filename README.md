@@ -10,7 +10,9 @@
 ## Features
 
 - **Waypoint 1.5** — Generate worlds at 720p / up to 60 fps using the [Waypoint-1.5-1B](https://huggingface.co/Overworld/Waypoint-1.5-1B) model (Apache-2.0).
-- **Waypoint 1.5 (360p)** — Lighter-weight variant for laptop GPUs and Apple Silicon via [Waypoint-1.5-1B-360P](https://huggingface.co/Overworld/Waypoint-1.5-1B-360P).
+- **Waypoint 1.5 (360p)** — Lighter-weight variant for laptop-class NVIDIA GPUs via [Waypoint-1.5-1B-360P](https://huggingface.co/Overworld/Waypoint-1.5-1B-360P).
+
+> **Platform note — NVIDIA only.** This plugin runs on CUDA-capable NVIDIA GPUs (Linux and Windows). The underlying [`world_engine`](https://github.com/Overworldai/world_engine) inference library has no Metal / MPS support today, so **macOS / Apple Silicon is not supported via this Scope plugin.** Mac users who want to try Waypoint-1.5 should use Overworld's native [Biome desktop app](https://over.world/install), which has its own Mac build independent of this plugin.
 
 ## Hardware guidance
 
@@ -18,7 +20,7 @@
 |---|---|---|
 | Waypoint 1.5 (720p) | RTX 5090 | 56 fps unquantized, 72 fps with `fp8w8a8` |
 | Waypoint 1.5 (720p) | RTX 3090 | ~30 fps with `intw8a8` |
-| Waypoint 1.5 (360p) | Laptop GPUs, Apple Silicon | Real-time up to 60 fps |
+| Waypoint 1.5 (360p) | Laptop-class NVIDIA GPUs (RTX 30xx mobile and up) | Real-time up to 60 fps |
 
 Quantization options exposed in the UI (load-time setting):
 - `intw8a8` — INT8 weights/activations, requires NVIDIA Ampere+ (30xx)
