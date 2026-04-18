@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import torch
 from torchvision.io import read_image
+from torchvision.transforms.v2.functional import resize as _tv_resize
 
 from scope.core.config import get_model_file_path
 from scope.core.pipelines.controller import CtrlInput, convert_to_win_keycodes
@@ -19,6 +20,9 @@ class WaypointPipeline(Pipeline):
     """Waypoint 1.5 (720p) pipeline."""
 
     model_repo_name: ClassVar[str] = "Waypoint-1.5-1B"
+    # Canvas the AE expects for this pipeline (taehv1_5 is strictly 16:9).
+    canvas_h: ClassVar[int] = 720
+    canvas_w: ClassVar[int] = 1280
 
     @classmethod
     def get_config_class(cls) -> type["BasePipelineConfig"]:
@@ -79,12 +83,28 @@ class WaypointPipeline(Pipeline):
 
         if init_cache:
             self.engine.reset()
-
-        # Handle image conditioning
-        if images and len(images) > 0:
-            image = read_image(images[0])  # CHW uint8
-            image = image.permute(1, 2, 0)  # HWC uint8
-            self.engine.append_frame(image)
+            # Starter-image conditioning (only on cache init). taehv1_5 is a
+            # streaming AE with 4x temporal compression that strictly requires
+            # 16:9 RGB uint8 input at the pipeline's canvas size, so we
+            # center-crop the user's image to 16:9, resize to canvas, and
+            # broadcast across the 4-frame temporal window to seed the stream.
+            if images and len(images) > 0:
+                img = read_image(images[0])  # CHW uint8 at original aspect
+                _, h, w = img.shape
+                # Center-crop to 16:9
+                target = 16 / 9
+                if w / h > target:
+                    new_w = int(h * target)
+                    left = (w - new_w) // 2
+                    img = img[:, :, left:left + new_w]
+                elif w / h < target:
+                    new_h = int(w / target)
+                    top = (h - new_h) // 2
+                    img = img[:, top:top + new_h, :]
+                img = _tv_resize(img, [self.canvas_h, self.canvas_w], antialias=True)
+                img = img.permute(1, 2, 0).contiguous()  # HWC uint8
+                chunk = img.unsqueeze(0).expand(4, -1, -1, -1).contiguous()
+                self.engine.append_frame(chunk)
 
         # Controller input: convert Scope's W3C codes to Windows virtual keycodes
         ctrl_input: CtrlInput = kwargs.get("ctrl_input") or CtrlInput()
@@ -100,6 +120,8 @@ class Waypoint360Pipeline(WaypointPipeline):
     """Waypoint 1.5 360p pipeline (laptop-class NVIDIA GPUs)."""
 
     model_repo_name: ClassVar[str] = "Waypoint-1.5-1B-360P"
+    canvas_h: ClassVar[int] = 360
+    canvas_w: ClassVar[int] = 640
 
     @classmethod
     def get_config_class(cls) -> type["BasePipelineConfig"]:
