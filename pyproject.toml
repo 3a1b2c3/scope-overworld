@@ -21,11 +21,15 @@ override-dependencies = [
     "torch==2.9.1",
     "torchvision==0.24.1",
     "torchaudio==2.9.1",
+    # world_engine 1.5 wants triton==3.6.0; daydream-scope pins 3.5.1.
+    # Override to satisfy world_engine (minor bump; Linux-only dep).
+    "triton==3.6.0 ; sys_platform == 'linux'",
+    "triton-windows==3.6.0.post26 ; sys_platform == 'win32'",
 ]
 
 [tool.uv.sources]
 daydream-scope = { git = "https://github.com/daydreamlive/scope" }
-world-engine = { git = "https://github.com/daydreamlive/world_engine", branch = "pin-torch" }
+world-engine = { git = "https://github.com/Overworldai/world_engine", branch = "main" }
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]

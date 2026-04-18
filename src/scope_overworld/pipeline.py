@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 from torchvision.io import read_image
@@ -8,13 +8,17 @@ from scope.core.pipelines.controller import CtrlInput, convert_to_win_keycodes
 from scope.core.pipelines.interface import Pipeline
 from world_engine import WorldEngine, CtrlInput as WorldCtrlInput
 
-from .schema import WaypointConfig
+from .schema import Waypoint360Config, WaypointConfig
 
 if TYPE_CHECKING:
     from scope.core.pipelines.schema import BasePipelineConfig
 
 
 class WaypointPipeline(Pipeline):
+    """Waypoint 1.5 (720p) pipeline."""
+
+    model_repo_name: ClassVar[str] = "Waypoint-1.5-1B"
+
     @classmethod
     def get_config_class(cls) -> type["BasePipelineConfig"]:
         return WaypointConfig
@@ -22,10 +26,10 @@ class WaypointPipeline(Pipeline):
     def __init__(
         self,
         prompt: str = "A fun game",
-        n_frames: int = 4096,
         device: torch.device | None = None,
         dtype: torch.dtype = torch.bfloat16,
-        warmup_frames: int = 3,
+        quant: str | None = None,
+        warmup_iters: int = 2,
         **kwargs,
     ):
         self.device = (
@@ -35,42 +39,32 @@ class WaypointPipeline(Pipeline):
         )
         self.dtype = dtype
 
-        # Build local model paths from DAYDREAM_SCOPE_MODELS_DIR
-        model_path = str(get_model_file_path("Waypoint-1-Small"))
-        ae_path = str(get_model_file_path("owl_vae_f16_c16_distill_v0_nogan"))
-        prompt_encoder_path = str(get_model_file_path("umt5-xl"))
+        # Local dir holding model.safetensors + config.yaml (pre-downloaded by Scope's
+        # artifact system). world_engine accepts either an HF URI or a local folder.
+        model_path = str(get_model_file_path(self.model_repo_name))
 
         self.engine = WorldEngine(
             model_path,
-            model_config_overrides={
-                "n_frames": n_frames,
-                "ae_uri": ae_path,
-                "prompt_encoder_uri": prompt_encoder_path,
-            },
+            quant=quant,
             device=self.device,
             dtype=self.dtype,
         )
         self.engine.set_prompt(prompt)
-        # Track current prompt to avoid redundant encoding
         self._current_prompt: str | None = prompt
 
-        self._warmup(warmup_frames)
+        self._warmup(warmup_iters)
 
-    def _warmup(self, n_frames: int) -> None:
-        """Run warmup frames to trigger JIT compilation."""
-        for _ in range(n_frames):
+    def _warmup(self, n_iters: int) -> None:
+        """Run warmup iterations to trigger JIT compilation. Each iter emits 4 frames."""
+        for _ in range(n_iters):
             self.engine.gen_frame(ctrl=WorldCtrlInput())
 
     def __call__(self, **kwargs) -> dict:
-        """Generate a frame with controller input.
-
-        Args:
-            ctrl_input: CtrlInput with W3C button codes and mouse velocity
-            prompts: List of prompt dicts with "text" key (uses first one)
-            init_cache: If True, reset engine state
+        """Generate a 4-frame chunk with controller input.
 
         Returns:
-            torch.Tensor: Frame in THWC format (1, H, W, 3) in [0, 1] range
+            dict: {"video": tensor of shape (4, H, W, 3) in [0, 1]}.
+            Scope's pipeline processor splits the T=4 output into per-frame packets.
         """
         manage_cache = kwargs.get("manage_cache", False)
         init_cache = kwargs.get("init_cache", False)
@@ -85,15 +79,13 @@ class WaypointPipeline(Pipeline):
 
         # Handle image conditioning
         if images and len(images) > 0:
-            # Read image from path and convert to uint8 HWC
             image = read_image(images[0])  # CHW uint8
             image = image.permute(1, 2, 0)  # HWC uint8
             self.engine.append_frame(image)
 
-        # Handle prompt changes
+        # Handle prompt changes without re-init
         if prompts and len(prompts) > 0:
             first_prompt = prompts[0]
-            # Prompts can be strings or dicts with "text" key
             new_prompt = (
                 first_prompt["text"] if isinstance(first_prompt, dict) else first_prompt
             )
@@ -101,12 +93,21 @@ class WaypointPipeline(Pipeline):
                 self.engine.set_prompt(new_prompt)
                 self._current_prompt = new_prompt
 
-        # Get controller input (scope's CtrlInput with W3C codes)
+        # Controller input: convert Scope's W3C codes to Windows virtual keycodes
         ctrl_input: CtrlInput = kwargs.get("ctrl_input") or CtrlInput()
-
-        # Convert W3C codes to Windows Virtual Keycodes for world_engine
         win_keys = convert_to_win_keycodes(ctrl_input)
         ctrl = WorldCtrlInput(button=win_keys, mouse=ctrl_input.mouse)
 
+        # Waypoint-1.5 returns (4, H, W, 3) uint8 per call (4x temporal compression).
         frame = self.engine.gen_frame(ctrl=ctrl)
-        return {"video": frame.unsqueeze(0).float() / 255.0}
+        return {"video": frame.float() / 255.0}
+
+
+class Waypoint360Pipeline(WaypointPipeline):
+    """Waypoint 1.5 360p pipeline (laptop GPUs / Apple Silicon)."""
+
+    model_repo_name: ClassVar[str] = "Waypoint-1.5-1B-360P"
+
+    @classmethod
+    def get_config_class(cls) -> type["BasePipelineConfig"]:
+        return Waypoint360Config

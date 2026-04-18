@@ -2,12 +2,13 @@
 
 import scope.core
 
-from .pipeline import WaypointPipeline
+from .pipeline import Waypoint360Pipeline, WaypointPipeline
 
 
 @scope.core.hookimpl
 def register_pipelines(register):
     register(WaypointPipeline)
+    register(Waypoint360Pipeline)
 
 
-__all__ = ["WaypointPipeline"]
+__all__ = ["Waypoint360Pipeline", "WaypointPipeline"]
