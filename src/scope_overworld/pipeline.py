@@ -46,11 +46,13 @@ class WaypointPipeline(Pipeline):
         # artifact cache rather than downloading into ~/.cache/huggingface.
         ae_path = str(get_model_file_path("taehv1_5"))
 
+        # world_engine passes device straight into safetensors.load_file, whose
+        # Rust bindings accept only str/int (not torch.device). Pass a string.
         self.engine = WorldEngine(
             model_path,
             quant=quant,
             model_config_overrides={"ae_uri": ae_path},
-            device=self.device,
+            device=str(self.device),
             dtype=self.dtype,
         )
 

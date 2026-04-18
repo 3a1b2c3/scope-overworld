@@ -18,11 +18,12 @@ dev = [
 
 [tool.uv]
 override-dependencies = [
-    "torch==2.9.1",
-    "torchvision==0.24.1",
-    "torchaudio==2.9.1",
-    # world_engine 1.5 wants triton==3.6.0; daydream-scope pins 3.5.1.
-    # Override to satisfy world_engine (minor bump; Linux-only dep).
+    # world_engine 1.5 needs torch==2.10.0 / triton==3.6.0 — torch 2.9.1's
+    # inductor crashes on triton 3.6's kernel metadata (no `cluster_dims`,
+    # fixed upstream in pytorch/pytorch#167187, shipped in 2.10.0).
+    # daydream-scope 0.2.2 still pins 2.9.1 / triton 3.5.1; override both here.
+    "torch==2.10.0",
+    "torchvision==0.25.0",
     "triton==3.6.0 ; sys_platform == 'linux'",
     "triton-windows==3.6.0.post26 ; sys_platform == 'win32'",
 ]
