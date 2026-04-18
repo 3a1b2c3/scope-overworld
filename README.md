@@ -47,6 +47,6 @@ Follow the [Scope plugins guide](https://docs.daydream.live/scope/guides/plugins
 
 Both `waypoint` and `waypoint_360p` pipelines use [world_engine](https://github.com/Overworldai/world_engine) for inference. The model is an autoregressive Diffusion Transformer with a bundled Tiny Hunyuan Autoencoder (`taehv1_5`) providing 4× temporal and 8× spatial compression. On first load, a JIT warmup pass runs to trigger compilation.
 
-Each inference step: controller input (keyboard/mouse) and the active prompt are processed → `world_engine` generates the next 4-frame chunk at the target resolution → Scope's pipeline processor splits the chunk into per-frame packets for the output stream.
+Waypoint-1.5 is controller-driven (keyboard + mouse) with optional starter-image conditioning; it has no text-prompt input. Each inference step: controller input is processed → `world_engine` generates the next 4-frame chunk at the target resolution → Scope's pipeline processor splits the chunk into per-frame packets for the output stream.
 
 Context window: 512 frames (~10 seconds at 60 fps).

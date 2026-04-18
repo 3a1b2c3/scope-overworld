@@ -23,7 +23,10 @@ class WaypointConfig(BasePipelineConfig):
     )
     docs_url = "https://github.com/Overworldai/world_engine"
 
-    supports_prompts = True
+    # Waypoint-1.5 configs ship with `prompt_conditioning: null` — the model has
+    # no text encoder, so text prompts are not a supported input modality.
+    # Inputs are the starter image (via `images`) and keyboard/mouse only.
+    supports_prompts: ClassVar[bool] = False
     default_temporal_interpolation_method = None
     default_spatial_interpolation_method = None
 
@@ -40,6 +43,13 @@ class WaypointConfig(BasePipelineConfig):
         HuggingfaceRepoArtifact(
             repo_id="Overworld/Waypoint-1.5-1B",
             files=["model.safetensors", "config.yaml"],
+        ),
+        # Autoencoder referenced by the model's config.yaml (`ae_uri`). Declared
+        # here so Scope manages the download + cache instead of world_engine
+        # silently pulling it into the HF hub cache on first load.
+        HuggingfaceRepoArtifact(
+            repo_id="Overworld-Models/taehv1_5",
+            files=["taehv1_5.pth"],
         ),
     ]
 
@@ -84,6 +94,10 @@ class Waypoint360Config(WaypointConfig):
         HuggingfaceRepoArtifact(
             repo_id="Overworld/Waypoint-1.5-1B-360P",
             files=["model.safetensors", "config.yaml"],
+        ),
+        HuggingfaceRepoArtifact(
+            repo_id="Overworld-Models/taehv1_5",
+            files=["taehv1_5.pth"],
         ),
     ]
 

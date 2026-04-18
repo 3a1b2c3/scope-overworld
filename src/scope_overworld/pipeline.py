@@ -6,7 +6,8 @@ from torchvision.io import read_image
 from scope.core.config import get_model_file_path
 from scope.core.pipelines.controller import CtrlInput, convert_to_win_keycodes
 from scope.core.pipelines.interface import Pipeline
-from world_engine import WorldEngine, CtrlInput as WorldCtrlInput
+from world_engine import CtrlInput as WorldCtrlInput
+from world_engine import WorldEngine
 
 from .schema import Waypoint360Config, WaypointConfig
 
@@ -25,7 +26,6 @@ class WaypointPipeline(Pipeline):
 
     def __init__(
         self,
-        prompt: str = "A fun game",
         device: torch.device | None = None,
         dtype: torch.dtype = torch.bfloat16,
         quant: str | None = None,
@@ -42,15 +42,17 @@ class WaypointPipeline(Pipeline):
         # Local dir holding model.safetensors + config.yaml (pre-downloaded by Scope's
         # artifact system). world_engine accepts either an HF URI or a local folder.
         model_path = str(get_model_file_path(self.model_repo_name))
+        # Point world_engine at the Scope-managed taehv1_5 dir so it uses our
+        # artifact cache rather than downloading into ~/.cache/huggingface.
+        ae_path = str(get_model_file_path("taehv1_5"))
 
         self.engine = WorldEngine(
             model_path,
             quant=quant,
+            model_config_overrides={"ae_uri": ae_path},
             device=self.device,
             dtype=self.dtype,
         )
-        self.engine.set_prompt(prompt)
-        self._current_prompt: str | None = prompt
 
         self._warmup(warmup_iters)
 
@@ -69,7 +71,6 @@ class WaypointPipeline(Pipeline):
         manage_cache = kwargs.get("manage_cache", False)
         init_cache = kwargs.get("init_cache", False)
         images = kwargs.get("images")
-        prompts = kwargs.get("prompts")
 
         if manage_cache and images and len(images) > 0:
             init_cache = True
@@ -83,16 +84,6 @@ class WaypointPipeline(Pipeline):
             image = image.permute(1, 2, 0)  # HWC uint8
             self.engine.append_frame(image)
 
-        # Handle prompt changes without re-init
-        if prompts and len(prompts) > 0:
-            first_prompt = prompts[0]
-            new_prompt = (
-                first_prompt["text"] if isinstance(first_prompt, dict) else first_prompt
-            )
-            if new_prompt != self._current_prompt:
-                self.engine.set_prompt(new_prompt)
-                self._current_prompt = new_prompt
-
         # Controller input: convert Scope's W3C codes to Windows virtual keycodes
         ctrl_input: CtrlInput = kwargs.get("ctrl_input") or CtrlInput()
         win_keys = convert_to_win_keycodes(ctrl_input)
@@ -104,7 +95,7 @@ class WaypointPipeline(Pipeline):
 
 
 class Waypoint360Pipeline(WaypointPipeline):
-    """Waypoint 1.5 360p pipeline (laptop GPUs / Apple Silicon)."""
+    """Waypoint 1.5 360p pipeline (laptop-class NVIDIA GPUs)."""
 
     model_repo_name: ClassVar[str] = "Waypoint-1.5-1B-360P"
 
