@@ -10,3 +10,6 @@ wheels/
 .venv
 
 *.local.json
+
+# Runtime caches (gemlite's autotune result)
+gemlite_config.json

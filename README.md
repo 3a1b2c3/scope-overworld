@@ -25,7 +25,7 @@
 Quantization options exposed in the UI (load-time setting):
 - `intw8a8` — INT8 weights/activations, requires NVIDIA Ampere+ (30xx)
 - `fp8w8a8` — FP8, requires Ada Lovelace / Hopper+
-- `nvfp4` — NVFP4, requires Blackwell
+- `nvfp4` — NVFP4, requires Blackwell and the [flashinfer](https://github.com/flashinfer-ai/flashinfer) kernel library. flashinfer ships Linux-only wheels, so this tier is only available on Linux today; Windows users should pick `intw8a8` or `fp8w8a8`.
 
 ## HuggingFace
 

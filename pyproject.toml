@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "world-engine",
+    # Optional kernel library behind the nvfp4 quant tier. flashinfer ships
+    # Linux-only wheels (nvcc build step); Windows users pick intw8a8 or
+    # fp8w8a8 instead and world_engine skips the nvfp4 code path.
+    "flashinfer-python ; sys_platform == 'linux'",
 ]
 
 [project.entry-points.scope]
