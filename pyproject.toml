@@ -21,27 +21,24 @@ dev = [
 ]
 
 [tool.uv]
+# Keep the plugin's transitive resolution locked to daydream-scope's torch/triton
+# pins (2.9.1 / 3.5.1). world_engine on pin-torch-1.5 already pins the same, so
+# these overrides are belt-and-suspenders against any loose transitive (taehv,
+# gemlite, flashinfer) pulling a conflicting torch into scope's venv.
 override-dependencies = [
-    # world_engine 1.5 needs torch==2.10.0 / triton==3.6.0 — torch 2.9.1's
-    # inductor crashes on triton 3.6's kernel metadata (no `cluster_dims`,
-    # fixed upstream in pytorch/pytorch#167187, shipped in 2.10.0).
-    # daydream-scope 0.2.2 still pins 2.9.1 / triton 3.5.1; override both here.
-    "torch==2.10.0",
-    "torchvision==0.25.0",
-    "triton==3.6.0 ; sys_platform == 'linux'",
-    "triton-windows==3.6.0.post26 ; sys_platform == 'win32'",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "triton==3.5.1 ; sys_platform == 'linux'",
+    "triton-windows==3.5.1.post24 ; sys_platform == 'win32'",
 ]
 
 [tool.uv.sources]
 daydream-scope = { git = "https://github.com/daydreamlive/scope" }
-world-engine = { git = "https://github.com/Overworldai/world_engine", branch = "main" }
+world-engine = { git = "https://github.com/daydreamlive/world_engine", branch = "pin-torch-1.5" }
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
-    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-torchaudio = [
     { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
