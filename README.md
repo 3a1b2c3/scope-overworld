@@ -9,11 +9,27 @@
 
 ## Features
 
-- Waypoint - Generate worlds using the [Waypoint-1.1-Small](https://huggingface.co/Overworld/Waypoint-1.1-Small) model
+- **Waypoint 1.5** — Generate worlds at 720p / up to 60 fps using the [Waypoint-1.5-1B](https://huggingface.co/Overworld/Waypoint-1.5-1B) model (Apache-2.0).
+- **Waypoint 1.5 (360p)** — Lighter-weight variant for laptop-class NVIDIA GPUs via [Waypoint-1.5-1B-360P](https://huggingface.co/Overworld/Waypoint-1.5-1B-360P).
+
+> **Platform note — NVIDIA only.** This plugin runs on CUDA-capable NVIDIA GPUs (Linux and Windows). The underlying [`world_engine`](https://github.com/Overworldai/world_engine) inference library has no Metal / MPS support today, so **macOS / Apple Silicon is not supported via this Scope plugin.** Mac users who want to try Waypoint-1.5 should use Overworld's native [Biome desktop app](https://over.world/install), which has its own Mac build independent of this plugin.
+
+## Hardware guidance
+
+| Variant | Target hardware | Approx. FPS |
+|---|---|---|
+| Waypoint 1.5 (720p) | RTX 5090 | 56 fps unquantized, 72 fps with `fp8w8a8` |
+| Waypoint 1.5 (720p) | RTX 3090 | ~30 fps with `intw8a8` |
+| Waypoint 1.5 (360p) | Laptop-class NVIDIA GPUs (RTX 30xx mobile and up) | Real-time up to 60 fps |
+
+Quantization options exposed in the UI (load-time setting):
+- `intw8a8` — INT8 weights/activations, requires NVIDIA Ampere+ (30xx)
+- `fp8w8a8` — FP8, requires Ada Lovelace / Hopper+
+- `nvfp4` — NVFP4, requires Blackwell and the [flashinfer](https://github.com/flashinfer-ai/flashinfer) kernel library. flashinfer ships Linux-only wheels, so this tier is only available on Linux today; Windows users should pick `intw8a8` or `fp8w8a8`.
 
 ## HuggingFace
 
-Model weights require HuggingFace authentication. See the [HuggingFace guide](https://docs.daydream.live/scope/guides/huggingface) for setup instructions.
+Model weights may require HuggingFace authentication. See the [HuggingFace guide](https://docs.daydream.live/scope/guides/huggingface) for setup instructions.
 
 ## Install
 
@@ -29,7 +45,8 @@ Follow the [Scope plugins guide](https://docs.daydream.live/scope/guides/plugins
 
 ## Architecture
 
-The `waypoint` pipeline uses [world_engine](https://github.com/Wayfarer-Labs/world_engine) for inference. It loads three model components: the Waypoint world model, OWL VAE (encoder/decoder), and UMT5-XL (text encoder). On first load, a JIT warmup pass runs for optimized performance which could take as long as 20 minutes on the first run.
+Both `waypoint` and `waypoint_360p` pipelines use [world_engine](https://github.com/Overworldai/world_engine) for inference. The model is an autoregressive Diffusion Transformer with a bundled Tiny Hunyuan Autoencoder (`taehv1_5`) providing 4× temporal and 8× spatial compression. On first load, a JIT warmup pass runs to trigger compilation.
 
-Each frame: controller input and prompt are processed → world_engine generates the next frame → the pipeline outputs a video tensor.
+Waypoint-1.5 is controller-driven (keyboard + mouse) with optional starter-image conditioning; it has no text-prompt input. Each inference step: controller input is processed → `world_engine` generates the next 4-frame chunk at the target resolution → Scope's pipeline processor splits the chunk into per-frame packets for the output stream.
 
+Context window: 512 frames (~10 seconds at 60 fps).
