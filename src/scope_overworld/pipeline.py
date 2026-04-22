@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, ClassVar
 
 import torch
-from torchvision.io import read_image
+from torchvision.io import ImageReadMode, read_image
 from torchvision.transforms.v2.functional import resize as _tv_resize
 
 from scope.core.config import get_model_file_path
@@ -89,7 +89,9 @@ class WaypointPipeline(Pipeline):
             # center-crop the user's image to 16:9, resize to canvas, and
             # broadcast across the 4-frame temporal window to seed the stream.
             if images and len(images) > 0:
-                img = read_image(images[0])  # CHW uint8 at original aspect
+                # Force RGB (3 channels) — taehv1_5's VAE encoder asserts
+                # shape[-1] == 3, so any RGBA input would hard-crash.
+                img = read_image(images[0], mode=ImageReadMode.RGB)  # CHW uint8
                 _, h, w = img.shape
                 # Center-crop to 16:9
                 target = 16 / 9
@@ -196,7 +198,7 @@ class Waypoint1SmallPipeline(Pipeline):
             self.engine.reset()
 
         if images and len(images) > 0:
-            image = read_image(images[0])  # CHW uint8
+            image = read_image(images[0], mode=ImageReadMode.RGB)  # CHW uint8
             image = image.permute(1, 2, 0)  # HWC uint8
             self.engine.append_frame(image)
 
