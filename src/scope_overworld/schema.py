@@ -103,3 +103,60 @@ class Waypoint360Config(WaypointConfig):
 
     height: int = 360
     width: int = 640
+
+
+class Waypoint1SmallConfig(BasePipelineConfig):
+    """Configuration for Waypoint 1 (Small) pipeline — the original Waypoint
+    model, with text-prompt conditioning and an owl_vae autoencoder.
+    """
+
+    pipeline_id = "waypoint_1_small"
+    pipeline_name = "Waypoint 1 (Small)"
+    pipeline_description = (
+        "Streaming pipeline for the original Waypoint-1-Small autoregressive video world model (text prompts + controller)."
+    )
+    docs_url = "https://github.com/Overworldai/world_engine"
+
+    supports_prompts = True
+    default_temporal_interpolation_method = None
+    default_spatial_interpolation_method = None
+
+    supports_cache_management = True
+
+    modes = {"text": ModeDefaults(default=True)}
+
+    artifacts: ClassVar[list[Artifact]] = [
+        HuggingfaceRepoArtifact(
+            repo_id="Overworld/Waypoint-1-Small",
+            files=["model.safetensors", "config.yaml"],
+        ),
+        HuggingfaceRepoArtifact(
+            repo_id="OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan",
+            files=[
+                "encoder.safetensors",
+                "encoder_conf.yml",
+                "decoder.safetensors",
+                "decoder_conf.yml",
+            ],
+        ),
+        HuggingfaceRepoArtifact(
+            repo_id="google/umt5-xl",
+            files=[
+                "config.json",
+                "pytorch_model-00001-of-00002.bin",
+                "pytorch_model-00002-of-00002.bin",
+                "pytorch_model.bin.index.json",
+                "special_tokens_map.json",
+                "spiece.model",
+                "tokenizer.json",
+                "tokenizer_config.json",
+            ],
+        ),
+    ]
+
+    ctrl_input: CtrlInput | None = None
+
+    images: list[str] | None = Field(
+        default=None,
+        description="List of reference image paths for conditioning",
+    )
